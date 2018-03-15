@@ -1,0 +1,24 @@
+---
+  - hosts: localhost
+
+    vars_prompt:
+    - name: iam_username
+      prompt: "Please provide your AWS IAM account name"
+      private: no
+
+    tasks:
+    - name: set facts for prompt inputs
+      set_fact:
+        iam_name: "{{iam_username}}"
+
+    - name: set sts-config file location
+      set_fact:
+        sts_config: "sts-config.json"
+
+    - name: copy file to aws directory
+      copy:
+        src: sts-config.json
+        dest: ~/.aws/sts-config.json
+
+    - name: add iam username to sts-config file
+      shell: sed -i -e 's/username/{{iam_name}}/' ~/.aws/sts-config.json

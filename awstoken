@@ -1,0 +1,90 @@
+#!/bin/bash
+# Author: Daniel Campailla
+################################################################################
+# USAGE: source awstoken <account> [<role>]
+################################################################################
+
+unset AWS_SECRET_ACCESS_KEY; unset AWS_ACCESS_KEY_ID
+unset AWS_SESSION_TOKEN; unset AWS_SECURITY_TOKEN
+
+aws_account_name=(
+  acc1
+  acc2
+  acc3
+  acc4
+  acc5
+  acc6
+)
+
+aws_permitted_role=(
+  role1
+  role2
+  role3
+)
+
+if [[ "$(basename -- "$0")" == "awstoken" ]]; then
+    echo "ERROR! $0 script must be sourced..."
+    echo "Usage: source awstoken <"${aws_account_name[@]}">" >&2
+    exit 1
+fi
+
+# Check correct argument is supplied before proceeding
+if [[ " ${aws_account_name[@]} " =~ " ${1} " ]]; then
+  echo "Generating temporary security credentials for" ${1} "account."
+else
+  echo "ERROR! Usage is: source awstoken <"${aws_account_name[@]}"> "
+  return
+fi
+
+# Check for second argument, default to first entry of aws_permitted_role
+if [[ -z "${2}" ]]; then
+  aws_role="${aws_permitted_role[0]}"
+elif [[ " ${aws_permitted_role[@]} " =~ " ${2} " ]]; then
+  aws_role="${2}"
+else
+  echo "ERROR! Usage is: source awstoken <"${aws_account_name[@]}"> <"${aws_permitted_role[@]}"> "
+  return
+fi
+
+# Prompt user for MFA code and AWS account
+read -p 'Please provide MFA token code: ' code
+
+# Set variables ----------------------------------------------------------------
+config_file=~/.aws/sts-config.json
+acc_json=$(cat ${config_file})
+account_no="$(jq -r --arg ENV ${1} '.Accounts[$ENV]' <<< ${acc_json})"
+iam_account="$(jq -r '.User.IAM' <<< ${acc_json})"
+username="$(jq -r '.User.Username' <<< ${acc_json})"
+# ------------------------------------------------------------------------------
+
+# Set awscli command as a variable for jq to capture output
+creds="$(aws sts assume-role --profile iam \
+--role-arn arn:aws:iam::${account_no}:role/${aws_role} \
+--role-session-name ansible \
+--serial-number arn:aws:iam::${iam_account}:mfa/${username} --token-code ${code})"
+
+# Use jq to capture AccessKeyId
+access_id="$(echo $creds | jq -r .Credentials.AccessKeyId)"
+
+# If AccessKeyId is blank return error message
+if [[ -z "$access_id" ]]; then
+    echo "Please ensure you entered the corrrect MFA code."
+    return
+fi
+
+# Use jq to capture SecretAccessKey and SessionToken
+secret_key="$(echo $creds | jq -r .Credentials.SecretAccessKey)"
+session_token="$(echo $creds | jq -r .Credentials.SessionToken)"
+
+# Export credentials to authenticate against AWS
+export AWS_ACCESS_KEY_ID="$access_id"
+export AWS_SECRET_ACCESS_KEY="$secret_key"
+export AWS_SESSION_TOKEN="$session_token"
+export AWS_ACCOUNT="$account_no"
+
+# Print exported credentials to screen
+echo "--------------------------------------------------------------------------"
+echo "Temporary AWS credentials for ${aws_role} role:"
+echo "--------------------------------------------------------------------------"
+env | grep -i aws
+echo "--------------------------------------------------------------------------"
